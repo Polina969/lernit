@@ -65,7 +65,6 @@ app.get(
     res.json(foundCourse);
   }
 );
-
 app.post(
   "/courses",
   (req: Request<{}, {}, { title: string }>, res: Response<CourseType>) => {
