@@ -14,20 +14,37 @@ import {
 } from "../types";
 import { CourseType, db, DBType } from "../db/db";
 import { HTTP_STATUSES } from "../utils";
+import { coursesRepository } from "../repositories/courses-repository";
+import {
+  query,
+  body,
+  validationResult,
+  ValidationError,
+} from "express-validator";
 
-const CourseViewModel = (dbCourse: CourseType): CourseViewModel => {
-  return {
-    id: dbCourse.id,
-    title: dbCourse.title,
-  };
-}; // это сократит код на даннный момент этот блок в коде применен не везде//
+//  const transformCourseViewModel = (
+//   dbCourse: CourseType
+// ): CourseViewModel => {
+//   return {
+//     id: dbCourse.id,
+//     title: dbCourse.title,
+//   };
+// }; // это сократит код на даннный момент этот блок в коде применен не везде//
 
+type ErrorResponse = {
+  errors: ValidationError[];
+};
+
+type CatchResponse = {
+  message: any;
+};
 // создание роутера на express
 export const getCourseRouter = (db: DBType) => {
   const coursesRouter = express.Router(); // наш роутер
   ///////////////////
   coursesRouter.get("/itMessage", (req: Request, res: Response) => {
-    res.send({ message: "IT-INCUBAR FOR YOU" });
+    const messageIT = coursesRepository.messageText(); // импорт к репозиторию
+    res.send(messageIT);
   });
 
   coursesRouter.get(
@@ -37,16 +54,8 @@ export const getCourseRouter = (db: DBType) => {
       res: Response<CourseViewModel[]>
     ) => {
       // используем CourseViewModel[] потому что выводим несколько таких объектов наличие массива тут нормально
-
-      let foundCourses = db.courses;
-
-      if (req.query.title) {
-        foundCourses = foundCourses.filter(
-          (c) => c.title.indexOf(req.query.title) > -1
-        );
-      }
-      // для того чтобы избежать излишков объекта courses
-      res.json(foundCourses.map(CourseViewModel));
+      const findCours = coursesRepository.findCourses(req.query.title); // импорт к репозиторию
+      res.send(findCours);
     }
   );
   coursesRouter.get(
@@ -55,60 +64,71 @@ export const getCourseRouter = (db: DBType) => {
       req: RequestWithParams<URIParamsCourseIdModel>,
       res: Response<CourseViewModel>
     ) => {
-      const foundCourse = db.courses.find((c) => c.id === +req.params.id);
-
-      if (!foundCourse) {
+      try {
+        const findWithIDCours: CourseViewModel =
+          coursesRepository.findWithIDCourses(+req.params.id); // импорт к репозиторию
+        res.send(findWithIDCours);
+      } catch (error: any) {
         res.sendStatus(HTTP_STATUSES.NOT_FOUND_404);
-        return;
       }
-      //  для того чтобы избежать излишков объекта courses но так как здесь надо вытащить один объект решение немно отличается
-      res.json({
-        id: foundCourse.id,
-        title: foundCourse.title,
-      });
     }
   );
+
   coursesRouter.post(
     "/",
+    body("title")
+      .trim()
+      .isLength({ min: 3, max: 10 })
+      .withMessage("Title length не соответсвует"),
     (
       req: RequestWithdResBodyAndReqBody<
         ResCreateCourseModel,
         ReqCreateCourseModel
       >,
-      res: Response<CourseViewModel>
+      res: Response
     ) => {
-      if (!req.body.title) {
-        res.sendStatus(HTTP_STATUSES.BAD_REQUEST_400);
-        return;
-      }
-      const createdCourse = {
-        id: +new Date(),
-        title: req.body.title,
-        studentsCount: 0,
-      };
-      db.courses.push(createdCourse);
+      try {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+          res
+            .status(HTTP_STATUSES.BAD_REQUEST_400)
+            .json({ errors: errors.array() }); // говорим typescript что это массив, и какого он типа.})
+        }
 
-      res.status(HTTP_STATUSES.CREATED_201).json(createdCourse);
+        const createdCours: CourseViewModel = coursesRepository.createCours(
+          req.body.title
+        ); // импорт к репозиторию
+        res.status(HTTP_STATUSES.CREATED_201).json(createdCours);
+      } catch (error: any) {
+        res
+          .status(HTTP_STATUSES.BAD_REQUEST_400)
+          .send({ message: error.message });
+      }
     }
   );
-  // fetch('http://localhost:3000/courses',{method: 'POST', body: JSON.stringify({title: 'new c'}), headers: {
-  //         'content-type': 'application/json'
-  //     }})
-  //     .then(res => res.json())
-  //     .then(json => console.log(json))
+  // fetch("http://localhost:4001/courses/1", {
+  //   method: "PUT",
+  //   body: JSON.stringify({ title: "OLD progect" }),
+  //   headers: {
+  //     "content-type": "application/json",
+  //   },
+  // })
+  //   .then((res) => res.json())
+  //   .then((json) => console.log(json));
+
   coursesRouter.delete(
     "/:id",
     (req: RequestWithParams<URIParamsCourseIdModel>, res: Response<{}>) => {
       // res считается что нельзя типпизровать при удаление
-      db.courses = db.courses.filter((c) => c.id !== +req.params.id);
-      res.sendStatus(HTTP_STATUSES.NO_CONTENT_204); // в целом можно поставить выпел программ
+      const deleteCours = coursesRepository.deleteCourse(+req.params.id); // импорт к репозиторию
+      res.send(deleteCours);
     }
   );
   // fetch('http://localhost:3000/courses/1',{method: 'DELETE'})
   // .then(res => res.json())
   // .then(json => console.log(json))
   coursesRouter.put(
-    "/courses/:id",
+    "/:id",
     (
       req: RequestWithParamsAndReqBody<
         URIParamsCourseIdModel,
@@ -116,20 +136,26 @@ export const getCourseRouter = (db: DBType) => {
       >,
       res: Response<{}>
     ) => {
-      if (!req.body.title) {
-        res.sendStatus(HTTP_STATUSES.BAD_REQUEST_400);
-        return;
-      }
+      const putCours = coursesRepository.putCourses(
+        +req.params.id,
+        req.body.title
+      ); // импорт к репозиторию
+      res.send(putCours);
 
-      const foundCourse = db.courses.find((c) => c.id === +req.params.id);
-      if (!foundCourse) {
-        res.sendStatus(HTTP_STATUSES.NOT_FOUND_404);
-        return;
-      }
+      // if (!req.body.title) {
+      //   res.sendStatus(HTTP_STATUSES.BAD_REQUEST_400);
+      //   return;
+      // }
 
-      foundCourse.title = req.body.title;
+      // const foundCourse = db.courses.find((c) => c.id === +req.params.id);
+      // if (!foundCourse) {
+      //   res.sendStatus(HTTP_STATUSES.NOT_FOUND_404);
+      //   return;
+      // }
 
-      res.sendStatus(HTTP_STATUSES.NO_CONTENT_204);
+      // foundCourse.title = req.body.title;
+
+      // res.sendStatus(HTTP_STATUSES.NO_CONTENT_204);
     }
   );
 
